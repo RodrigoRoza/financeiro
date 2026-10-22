@@ -1,18 +1,20 @@
 // investimentos.js — aba Investimentos (modelo Investidor10).
-// Carrega depois de app.js. Usa funções de regras.js, dados.js e app.js.
+// Carrega depois de app.js. Usa funções de regras.js, dados.js, app.js e proventos.js.
 
 const INV_CATEGORIAS = ['Ações', 'FIIs', 'Tesouro Direto', 'ETFs'];
 const CHAVE_COTACOES = 'painel_saldos_cotacoes_v1';
 const URL_COTACOES = 'https://brapi.dev/api/quote/';
 const CHAVE_TOKEN_BRAPI = 'painel_saldos_brapi_token';
 const TEMPO_LIMITE_COTACOES_MS = 15000;
+const TEMPO_MINIMO_ENTRE_COTACOES_MS = 30 * 60 * 1000; // 30 minutos entre buscas automáticas
+const PAUSA_ENTRE_COTACOES_MS = 1200; // pausa entre um ativo e outro, para não exceder o limite da brapi
 
 let INV_COTACOES = { precos: {}, atualizadoEm: null, erro: null };
 let invEstado = null; // { tipo: 'op' | 'ativo' | 'provento', ticker }
 
 // ---------- Dados ----------
 
-// Carteira fica em dados.investimentos: { ativos: { TICKER: {tipo, ideal, precoManual} }, operacoes: [] }
+// Carteira fica em dados.investimentos: { ativos: { TICKER: {tipo, ideal, precoManual, usarManual} }, operacoes: [] }
 function invDados() {
   if (!estado.dados.investimentos) {
     estado.dados.investimentos = { ativos: {}, operacoes: [] };
@@ -80,7 +82,40 @@ function validarOperacao(op) {
   return null;
 }
 
+// ---------- Links do Clube FII ----------
+
+// Monta o link do Clube FII a partir da constante URL_CLUBE_FII definida em proventos.js
+function linkClubeFIIInv(ticker) {
+  if (!ticker || typeof URL_CLUBE_FII === 'undefined') return null;
+  return URL_CLUBE_FII + ticker.toLowerCase();
+}
+
+// Link ao lado do ticker na carteira, só para FIIs
+function htmlLinkFII(ticker) {
+  const url = linkClubeFIIInv(ticker);
+  if (!url) return '';
+  return ` <a class="link-fii" href="${escapar(url)}" target="_blank" rel="noopener"><small>Clube FII</small></a>`;
+}
+
+// Atualiza o link dentro do modal de lançamento, conforme ticker e categoria
+function atualizarLinkFIINoModal() {
+  const corpo = el('modal-inv-corpo');
+  const alvo = corpo.querySelector('[data-link-fii]');
+  const campoTicker = corpo.querySelector('[name="ticker"]');
+  const campoTipo = corpo.querySelector('[name="tipo"]');
+  if (!alvo || !campoTicker || !campoTipo) return;
+  const ticker = campoTicker.value.trim().toUpperCase();
+  const url = campoTipo.value === 'FIIs' ? linkClubeFIIInv(ticker) : null;
+  alvo.innerHTML = url
+    ? `<a class="link-fii" href="${escapar(url)}" target="_blank" rel="noopener">Ver ${escapar(ticker)} no Clube FII</a>`
+    : '';
+}
+
 // ---------- Cotações ----------
+
+function esperar(ms) {
+  return new Promise(resolver => setTimeout(resolver, ms));
+}
 
 function carregarCacheCotacoes() {
   try {
@@ -98,10 +133,41 @@ function tickersParaCotar() {
     .map(p => p.ticker);
 }
 
-// Busca as cotações ao abrir a página e ao clicar em "Atualizar cotações".
-async function atualizarCotacoes() {
+// Busca a cotação de um único ativo
+async function buscarCotacaoUnica(ticker, cabecalhos, sinal) {
+  const resposta = await fetch(URL_COTACOES + encodeURIComponent(ticker), {
+    headers: cabecalhos,
+    signal: sinal
+  });
+  if (resposta.status === 401 || resposta.status === 403) throw new Error('token');
+  if (resposta.status === 429) throw new Error('limite');
+  if (resposta.status === 400 || resposta.status === 404) throw new Error('nao-encontrado');
+  if (!resposta.ok) throw new Error('rede');
+
+  const json = await resposta.json();
+  const x = (json.results || [])[0];
+  const preco = x ? Number(x.regularMarketPrice) : NaN;
+  if (!Number.isFinite(preco)) throw new Error('nao-encontrado');
+
+  return {
+    preco,
+    variacao: Number(x.regularMarketChangePercent) || 0
+  };
+}
+
+// forcar = true vem do botão "Atualizar cotações" e de "Configurar token".
+// Sem forçar, não consulta de novo se a última busca tiver menos de 30 minutos.
+async function atualizarCotacoes(forcar = false) {
   const tickers = tickersParaCotar();
   if (!tickers.length) {
+    renderizarInvestimentos();
+    return;
+  }
+
+  const ultima = INV_COTACOES.atualizadoEm ? new Date(INV_COTACOES.atualizadoEm).getTime() : 0;
+  const recente = Date.now() - ultima < TEMPO_MINIMO_ENTRE_COTACOES_MS;
+  const todosCotados = tickers.every(t => INV_COTACOES.precos[t]);
+  if (!forcar && recente && todosCotados && !INV_COTACOES.erro) {
     renderizarInvestimentos();
     return;
   }
@@ -113,47 +179,58 @@ async function atualizarCotacoes() {
   const limite = setTimeout(() => controle.abort(), TEMPO_LIMITE_COTACOES_MS);
 
   el('inv-cotacao').textContent = 'Buscando cotações...';
-  try {
-    const resposta = await fetch(URL_COTACOES + tickers.join(','), {
-      headers: cabecalhos,
-      signal: controle.signal
-    });
-    if (resposta.status === 401 || resposta.status === 403) throw new Error('token');
-    if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`);
+  const precos = { ...INV_COTACOES.precos };
+  let sucessos = 0;
+  let erro = null;
 
-    const json = await resposta.json();
-    const precos = { ...INV_COTACOES.precos };
-    (json.results || []).forEach(x => {
-      const preco = Number(x.regularMarketPrice);
-      if (!Number.isFinite(preco)) return;
-      precos[String(x.symbol).toUpperCase()] = {
-        preco,
-        variacao: Number(x.regularMarketChangePercent) || 0
-      };
-    });
-    INV_COTACOES = { precos, atualizadoEm: new Date().toISOString(), erro: null };
-  } catch (e) {
-    console.warn('Cotações indisponíveis:', e.message);
-    if (e.message === 'token') {
-      INV_COTACOES.erro = token ? 'token-invalido' : 'sem-token';
-    } else {
-      INV_COTACOES.erro = 'rede';
+  try {
+    // Uma consulta por vez, com pausa entre elas. Ao primeiro erro grave, para de consultar.
+    for (let i = 0; i < tickers.length; i++) {
+      const ticker = tickers[i];
+      try {
+        precos[ticker] = await buscarCotacaoUnica(ticker, cabecalhos, controle.signal);
+        sucessos++;
+      } catch (e) {
+        const motivo = e.message;
+        console.warn(`Cotação indisponível para ${ticker}:`, motivo);
+        if (motivo !== 'nao-encontrado') {
+          erro = motivo; // token, limite ou rede
+          break;
+        }
+      }
+      if (i < tickers.length - 1) await esperar(PAUSA_ENTRE_COTACOES_MS);
     }
   } finally {
     clearTimeout(limite);
+  }
+
+  INV_COTACOES.precos = precos;
+  if (sucessos > 0) INV_COTACOES.atualizadoEm = new Date().toISOString();
+
+  if (erro === 'token') {
+    INV_COTACOES.erro = token ? 'token-invalido' : 'sem-token';
+  } else if (erro === 'limite') {
+    INV_COTACOES.erro = 'limite';
+  } else if (erro === 'rede' && sucessos === 0) {
+    INV_COTACOES.erro = 'rede';
+  } else {
+    INV_COTACOES.erro = null;
   }
 
   localStorage.setItem(CHAVE_COTACOES, JSON.stringify(INV_COTACOES));
   renderizarInvestimentos();
 }
 
-// Prioridade: cotação buscada, depois preço manual, depois nada
+// Prioridade: preço manual marcado para uso, depois cotação buscada, depois preço manual comum
 function precoAtualDe(ticker) {
+  const a = invDados().ativos[ticker];
+  if (a && a.precoManual && a.usarManual) {
+    return { preco: Number(a.precoManual), variacao: 0, origem: 'manual' };
+  }
   const cot = INV_COTACOES.precos[ticker];
   if (cot && Number.isFinite(cot.preco)) {
     return { preco: cot.preco, variacao: cot.variacao, origem: 'cotação' };
   }
-  const a = invDados().ativos[ticker];
   if (a && a.precoManual) {
     return { preco: Number(a.precoManual), variacao: 0, origem: 'manual' };
   }
@@ -168,6 +245,7 @@ function textoStatusCotacao() {
     const motivo = {
       'sem-token': 'Falta o token da brapi. Clique em "Configurar token".',
       'token-invalido': 'O token da brapi foi recusado. Clique em "Configurar token" e confira.',
+      'limite': 'A brapi limitou as consultas por enquanto. Tente de novo em alguns minutos.',
       'rede': 'Cotação indisponível agora.'
     }[INV_COTACOES.erro] || 'Cotação indisponível.';
     const complemento = quando
@@ -185,7 +263,7 @@ function configurarToken() {
   const limpo = novo.trim();
   if (limpo) localStorage.setItem(CHAVE_TOKEN_BRAPI, limpo);
   else localStorage.removeItem(CHAVE_TOKEN_BRAPI);
-  atualizarCotacoes();
+  atualizarCotacoes(true);
 }
 
 // ---------- Cálculos da carteira ----------
@@ -247,9 +325,10 @@ function htmlLinhaAtivo(l, patrimonio) {
     : (pctCarteira < ideal ? 'Sim' : 'Não');
   const classeComprar = comprar === 'Sim' ? 'saldo-ok' : comprar === 'Não' ? 'saldo-neg' : '';
   const semPreco = l.atual === null;
+  const linkFII = l.categoria === 'FIIs' ? htmlLinkFII(l.ticker) : '';
   return `
     <tr>
-      <td><strong>${escapar(l.ticker)}</strong></td>
+      <td><strong>${escapar(l.ticker)}</strong>${linkFII}</td>
       <td>${quantTxt(l.quant)}</td>
       <td>${formatarMoeda(l.pm)}</td>
       <td>${semPreco ? '—' : formatarMoeda(l.atual)}${l.origem === 'manual' ? ' <small>(manual)</small>' : ''}</td>
@@ -384,6 +463,7 @@ function abrirOperacao(tickerPre) {
       <span>Categoria</span>
       <select name="tipo">${opcoesTipo(tipo)}</select>
     </label>
+    <div class="ajuda" data-link-fii></div>
     <label class="form-linha">
       <span>Data</span>
       <input name="data" type="date" required value="${hojeISO()}">
@@ -402,10 +482,16 @@ function abrirOperacao(tickerPre) {
     </label>
     <p class="ajuda">Compra: atualiza o preço médio. Venda: reduz a quantidade e mantém o preço médio. Ajuste: define quantidade e preço médio diretamente.</p>`,
     'Salvar lançamento');
+
+  // Link do Clube FII acompanha o ticker e a categoria
+  const corpo = el('modal-inv-corpo');
+  corpo.querySelector('[name="ticker"]').addEventListener('input', atualizarLinkFIINoModal);
+  corpo.querySelector('[name="tipo"]').addEventListener('change', atualizarLinkFIINoModal);
+  atualizarLinkFIINoModal();
 }
 
 function abrirEditarAtivo(ticker) {
-  const a = invDados().ativos[ticker] || { tipo: 'Ações', ideal: null, precoManual: null };
+  const a = invDados().ativos[ticker] || { tipo: 'Ações', ideal: null, precoManual: null, usarManual: false };
   invEstado = { tipo: 'ativo', ticker };
   abrirModalInv(`Editar ${ticker}`, `
     <label class="form-linha">
@@ -418,9 +504,13 @@ function abrirEditarAtivo(ticker) {
     </label>
     <label class="form-linha">
       <span>Preço manual (R$)</span>
-      <input name="precoManual" type="number" step="0.01" min="0" value="${a.precoManual ?? ''}" placeholder="use se não houver cotação">
+      <input name="precoManual" type="number" step="0.01" min="0" value="${a.precoManual ?? ''}" placeholder="preço usado na carteira">
     </label>
-    <p class="ajuda">Para Tesouro Direto, informe o preço manual atual. Quantidade e preço médio mudam pelo lançamento de ajuste.</p>`,
+    <label class="form-linha">
+      <span>Usar manual</span>
+      <input name="usarManual" type="checkbox" ${a.usarManual ? 'checked' : ''}>
+    </label>
+    <p class="ajuda">Para Tesouro Direto, informe o preço manual atual. Marque "Usar manual" para usar o preço manual mesmo quando houver cotação. Quantidade e preço médio mudam pelo lançamento de ajuste.</p>`,
     'Salvar');
 }
 
@@ -444,7 +534,8 @@ function enviarModalInv(evento) {
       ...anterior,
       tipo: c('tipo').value,
       ideal: c('ideal').value === '' ? null : Number(c('ideal').value),
-      precoManual: c('precoManual').value === '' ? null : Number(c('precoManual').value)
+      precoManual: c('precoManual').value === '' ? null : Number(c('precoManual').value),
+      usarManual: c('usarManual').checked
     };
   } else {
     const ticker = c('ticker').value.trim().toUpperCase();
@@ -468,7 +559,8 @@ function enviarModalInv(evento) {
       ...anterior,
       tipo: c('tipo').value,
       ideal: c('ideal').value === '' ? (anterior.ideal ?? null) : Number(c('ideal').value),
-      precoManual: anterior.precoManual ?? null
+      precoManual: anterior.precoManual ?? null,
+      usarManual: anterior.usarManual ?? false
     };
   }
 
@@ -525,7 +617,7 @@ function iniciarInvestimentos() {
     b.addEventListener('click', () => ativarAba(b.dataset.aba));
   });
   el('btn-inv-novo').addEventListener('click', () => abrirOperacao(null));
-  el('btn-inv-cotacao').addEventListener('click', atualizarCotacoes);
+  el('btn-inv-cotacao').addEventListener('click', () => atualizarCotacoes(true));
   el('aba-investimentos').addEventListener('click', cliqueInvestimentos);
   el('modal-inv-form').addEventListener('submit', enviarModalInv);
   el('modal-inv-cancelar').addEventListener('click', fecharModalInv);
@@ -537,7 +629,7 @@ function iniciarInvestimentos() {
     if (e.key === 'Escape' && invEstado) fecharModalInv();
   });
 
-  // Cotações buscadas uma vez, ao abrir a página
+  // Cotações buscadas ao abrir a página, respeitando o intervalo de 30 minutos
   atualizarCotacoes();
 }
 
