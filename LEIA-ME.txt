@@ -1,0 +1,23 @@
+LEIA-ME: painel de saldos
+
+REGRAS DE CÁLCULO (regras.js)
+Versão atual: 3 (REGRAS_VERSAO = 3)
+
+Histórico de versões
+- v3: frequências (não repete, mensal, semanal, diária e parcelado).
+      O saldo informado vale no início do dia; os lançamentos do mesmo dia são somados depois.
+      Dados salvos antes da v3 continuam válidos (campos "mensal" e "parcelas").
+- v2: compra parcelada: o valor digitado é o total, dividido em parcelas iguais no mesmo dia do mês.
+      Os centavos extras vão para as primeiras parcelas.
+
+PROVENTOS (proventos.js)
+- Somente lançamento manual. Não há busca automática.
+- A quantidade é calculada pela carteira na data-com (inclusive).
+- O link do Clube FII aparece apenas para ativos classificados como FII.
+
+TESTES
+- No navegador, abra o Console (F12) e digite: testarRegras()
+- Sem falhas, a mensagem é "Todos os testes de regras passaram."
+
+MANUTENÇÃO
+- Ao alterar um cálculo em regras.js, aumente REGRAS_VERSAO e registre a mudança neste arquivo.

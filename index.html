@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel pessoal de saldos</title>
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body data-tema="claro">
+
+  <header class="topo">
+    <div class="topo-linha">
+      <h1>Painel pessoal</h1>
+      <div class="acoes-topo">
+        <button type="button" id="btn-tema" class="secundario">Tema escuro</button>
+        <button type="button" id="btn-exportar" class="secundario">Exportar CSV</button>
+      </div>
+    </div>
+    <nav class="abas">
+      <button class="aba ativa" type="button" data-aba="saldos">Saldos</button>
+      <button class="aba" type="button" data-aba="investimentos">Investimentos</button>
+      <button class="aba" type="button" data-aba="proventos">Proventos</button>
+      <button class="aba" type="button" disabled title="Em breve">Metas</button>
+      <button class="aba" type="button" disabled title="Em breve">Lançamentos</button>
+      <button class="aba" type="button" disabled title="Em breve">Tags</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="aba-saldos">
+      <div class="cartao barra">
+        <div class="linha">
+          <label>Conta
+            <select id="conta"></select>
+          </label>
+          <input id="nome-conta" type="text" placeholder="Nome da nova conta">
+          <button id="btn-nova-conta" type="button">Criar conta</button>
+        </div>
+        <div class="linha periodo">
+          <button id="btn-mes-ant" type="button" class="secundario" aria-label="Mês anterior">◀</button>
+          <strong id="periodo"></strong>
+          <button id="btn-mes-prox" type="button" class="secundario" aria-label="Próximo mês">▶</button>
+          <button id="btn-hoje" type="button" class="secundario">Hoje</button>
+          <span class="resumo">Saldo atual: <strong id="saldo-atual"></strong></span>
+        </div>
+      </div>
+
+      <div id="grade" class="grade-meses"></div>
+
+      <p class="ajuda">
+        Clique em uma célula para lançar ou editar. Clique na coluna Saldo para informar o saldo do dia.
+      </p>
+    </section>
+
+    <section id="aba-investimentos" hidden>
+      <div class="cartao barra">
+        <div class="linha">
+          <strong>Minha carteira</strong>
+          <span id="inv-cotacao" class="inv-status"></span>
+          <div class="resumo">
+            <button type="button" id="btn-inv-cotacao" class="secundario">Atualizar cotações</button>
+            <button type="button" id="btn-inv-novo">+ Adicionar lançamento</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cards-inv">
+        <div class="cartao-inv">
+          <span>Patrimônio total</span>
+          <strong id="inv-patrimonio"></strong>
+          <small id="inv-patrimonio-var"></small>
+        </div>
+        <div class="cartao-inv">
+          <span>Valor investido</span>
+          <strong id="inv-investido"></strong>
+        </div>
+        <div class="cartao-inv">
+          <span>Ganho de capital</span>
+          <strong id="inv-ganho"></strong>
+          <small id="inv-ganho-pct"></small>
+        </div>
+      </div>
+
+      <div id="inv-categorias"></div>
+
+      <div class="cartao">
+        <h2>Histórico de lançamentos</h2>
+        <div class="tabela-wrap">
+          <table class="planilha">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Ativo</th>
+                <th>Operação</th>
+                <th>Quant.</th>
+                <th>Preço</th>
+                <th>Total</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="inv-historico"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="aba-proventos" hidden>
+      <div class="cartao barra">
+        <div class="linha">
+          <strong>Proventos</strong>
+          <span id="prov-status" class="inv-status"></span>
+          <div class="resumo">
+            <button type="button" id="btn-prov-novo">+ Lançar provento</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="cards-inv">
+        <div class="cartao-inv">
+          <span>Média mensal (últ. 12 meses)</span>
+          <strong id="prov-media12"></strong>
+        </div>
+        <div class="cartao-inv">
+          <span>Total de 12 meses</span>
+          <strong id="prov-total12"></strong>
+        </div>
+        <div class="cartao-inv">
+          <span>Total recebido</span>
+          <strong id="prov-total"></strong>
+        </div>
+        <div class="cartao-inv">
+          <span>A receber</span>
+          <strong id="prov-aberto"></strong>
+        </div>
+      </div>
+
+      <div class="cartao">
+        <h2>Histórico mensal</h2>
+        <div id="prov-grade"></div>
+      </div>
+
+      <div class="cartao">
+        <h2>Lançamentos de proventos</h2>
+        <div class="tabela-wrap">
+          <table class="planilha">
+            <thead>
+              <tr>
+                <th>Pagamento</th>
+                <th>Ativo</th>
+                <th>Tipo</th>
+                <th>Quant.</th>
+                <th>Data-com</th>
+                <th>Valor/cota</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="prov-historico"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal-fundo" hidden>
+    <div class="modal-caixa" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
+      <div class="modal-topo">
+        <h2 id="modal-titulo"></h2>
+        <button type="button" id="modal-x" class="secundario" aria-label="Fechar">✕</button>
+      </div>
+      <form id="modal-form">
+        <div id="modal-corpo"></div>
+        <div class="modal-rodape">
+          <button type="button" id="modal-cancelar" class="secundario">Cancelar</button>
+          <button type="submit">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-inv" class="modal-fundo" hidden>
+    <div class="modal-caixa" role="dialog" aria-modal="true" aria-labelledby="modal-inv-titulo">
+      <div class="modal-topo">
+        <h2 id="modal-inv-titulo"></h2>
+        <button type="button" id="modal-inv-x" class="secundario" aria-label="Fechar">✕</button>
+      </div>
+      <form id="modal-inv-form">
+        <div id="modal-inv-corpo"></div>
+        <div class="modal-rodape">
+          <button type="button" id="modal-inv-cancelar" class="secundario">Cancelar</button>
+          <button type="submit" id="modal-inv-salvar">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="regras.js"></script>
+  <script src="dados.js"></script>
+  <script src="app.js"></script>
+  <script src="investimentos.js"></script>
+  <script src="proventos.js"></script>
+</body>
+</html>
